@@ -1,7 +1,7 @@
 import axios, { AxiosError } from 'axios'
 import * as cheerio from 'cheerio'
 import type { Request, Response } from 'express'
-import type { DetailRecipeResponse, RecipeResponse } from '../models/response/recipe_response'
+import type { DetailRecipeResponse, IngredientResponse, RecipeResponse } from '../models/response/recipe_response'
 import type { GetRecipeQuery, SearchRecipeQuery } from '../models/request/recipe_request'
 import { generateErrorResponse, generateResponse } from '../utils/response_utils'
 import { parseCookTimeToMinute } from '../utils/time_utils'
@@ -22,31 +22,58 @@ export async function getRecipeDetail(req: Request<any, any, any, { url: string 
 
     const title = $('header._section-title > h1').text().trim()
     const shortDescription = $('div.excerpt.text-center.text-md-start').text().trim()
-    const imageUrl = $('figure.recipe-image > img').attr()?.['data-src'] ?? ''
-    const cookTimes = $('div._recipe-features.position-relative > div > div').children().first().find('span').text().trim()
+    const imageUrl = $('img.image').attr()?.['src'] ?? ''
+    const cookTimes = $('div._recipe-features').find('a').text().trim()
     const cookTime = parseCookTimeToMinute(cookTimes)
 
-    const ingredients = []
+    const ingredients: IngredientResponse[] = []
 
-    let isIngredient = true
-    $('div._recipe-ingredients')
+    const recipeContainer = $('div._recipe-ingredients')
+    
+    recipeContainer
       .children()
-      .filter((index, element) => element.attribs.class != 'portions d-inline-flex align-itens-center text-white p-2 ps-4 mb-5' && element.tagName != 'header')
-      .each((index, element) => {
-        if (isIngredient && element) {
+      .each((recipeIndex, recipeParent) => {
+        if (recipeParent.tagName == 'p') {
+          const header = $(recipeParent)
+          const ingredient: IngredientResponse = { 
+            title: header.text().trim(), 
+            ingredients: [] 
+          }
 
+          let next = header.next();
+          while (next.length && next[0].tagName == 'div') {
+            ingredient.ingredients.push(
+              { 
+                quantity: next.find('div.part.fw-bold.me-3').text().replace(/\s+/g, ' ').trim(), 
+                name: next.find('div.item').text().replace(/\s+/g, ' ').trim()
+              }
+            )
+            next = next.next()
+          }
+
+          ingredients.push(ingredient)
         }
-        console.log(element.tagName)
+      }
+    )
+
+    const instructions: string[] = []
+    const instructionContainer = $('div._recipe-steps')
+    instructionContainer
+      .children()
+      .filter((_, element) => element.tagName == 'div')
+      .each((index, element) => {
+        const instruction = $(element).find('div.content').text().trim()
+        instructions.push(instruction)
       })
 
     const data: DetailRecipeResponse = {
       image_url: imageUrl,
       title: title,
       cook_time: cookTime,
-      ingredients_total: 0,
+      ingredients_total: ingredients.flatMap((ingredient) => ingredient.ingredients).length,
       short_description: shortDescription,
-      ingredients: [],
-      instructions: []
+      ingredients: ingredients,
+      instructions: instructions
     }
 
     const response = generateResponse(data, 'Success get recipe', 200)
